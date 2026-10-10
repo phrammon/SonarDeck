@@ -1,0 +1,27 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationIcon>SonarDeck.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Embedded so the tray icon resolves regardless of install location or
+         working directory. LogicalName keeps the lookup stable. -->
+    <EmbeddedResource Include="SonarDeck.ico" LogicalName="SonarDeck.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Steelseries-NET-API" Version="2.0.0" />
+    <!-- Core Audio wrapper for adjusting a specific playback endpoint's volume.
+         Only the CoreAudioApi layer is used; no playback or recording. -->
+    <PackageReference Include="NAudio.Wasapi" Version="3.1.0" />
+    <PackageReference Include="System.IO.Ports" Version="10.0.12" />
+    <PackageReference Include="System.Management" Version="10.0.12" />
+  </ItemGroup>
+
+</Project>

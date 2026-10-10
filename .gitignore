@@ -1,0 +1,17 @@
+# Build output
+bin/
+obj/
+
+# Visual Studio / Rider / VS Code state
+.vs/
+*.user
+*.suo
+*.userprefs
+
+# Logs written next to the executable
+*.log
+
+# OS noise
+Thumbs.db
+desktop.ini
+.DS_Store
