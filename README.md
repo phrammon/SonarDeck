@@ -19,6 +19,7 @@ It keeps a physical ChatMix dial, mute button and LED bargraph on the ESP8266 in
 - Handles commands coming back from the hardware: `CHAT_PLUS`, `CHAT_MINUS`, `MUTE`, `SWITCH_MIC`.
 
 **Volume keys follow Sonar**
+- Sonar monitoring runs independently of the ESP8266: volume-key routing works even when the controller is unplugged or reconnecting.
 - A low-level keyboard hook (`WH_KEYBOARD_LL`) intercepts Volume Up / Down / Mute system-wide.
 - The keys drive the **Windows playback device Sonar is sending Game/Chat to**, not whatever Windows considers default.
 - Uses the endpoint's own volume step (`VolumeStepUp` / `VolumeStepDown`), so a press moves the volume by exactly as much as Windows itself would.
@@ -69,7 +70,7 @@ It keeps a physical ChatMix dial, mute button and LED bargraph on the ESP8266 in
 - **Windows 10 / 11** (x64).
 - **.NET 10** (desktop) to build; the app targets `net10.0-windows`.
 - **SteelSeries GG with Sonar** installed and running for chat-mix, mute and redirection features.
-- An **ESP8266** (NodeMCU / ESP-12E) flashed with [`SonarDeck.ino`](SonarDeck.ino), on a CH340 USB-serial adapter.
+- For hardware controls and LED feedback: an **ESP8266** (NodeMCU / ESP-12E) flashed with [`SonarDeck.ino`](SonarDeck.ino), on a CH340 USB-serial adapter.
 
 ---
 

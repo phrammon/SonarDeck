@@ -142,7 +142,9 @@ namespace SonarController
             ObjectDisposedException.ThrowIf(_disposed, this);
 
             _cts = new CancellationTokenSource();
-            _worker = Task.Run(() => RunAsync(_cts.Token));
+            _worker = Task.WhenAll(
+                Task.Run(() => RunAsync(_cts.Token)),
+                Task.Run(() => RunSonarAsync(_cts.Token)));
         }
 
         /// <summary>
@@ -190,6 +192,7 @@ namespace SonarController
 
             _cts?.Dispose();
             Disconnect();
+            DisconnectSonar();
         }
 
         private void SetStatus(BridgeStatus status, string detail)
@@ -338,41 +341,56 @@ namespace SonarController
                 throw;
             }
 
-            var sonar = new SonarClient();
-
-            try
-            {
-                // Sonar event detection
-                sonar.Events.PollingInterval = TimeSpan.FromMilliseconds(200);
-                sonar.Events.ChatMixChanged += OnChatMixChanged;
-                sonar.Events.VolumeChanged += OnVolumeChanged;
-                sonar.Events.ClassicDeviceChanged += OnClassicDeviceChanged;
-                sonar.Events.Connected += OnSonarConnected;
-                sonar.Events.Disconnected += OnSonarDisconnected;
-                sonar.Events.Start();
-            }
-            catch
-            {
-                sonar.Events.ChatMixChanged -= OnChatMixChanged;
-                sonar.Events.VolumeChanged -= OnVolumeChanged;
-                sonar.Events.ClassicDeviceChanged -= OnClassicDeviceChanged;
-                sonar.Events.Connected -= OnSonarConnected;
-                sonar.Events.Disconnected -= OnSonarDisconnected;
-                sonar.Dispose();
-
-                serial.DataReceived -= OnSerialDataReceived;
-                serial.Dispose();
-                throw;
-            }
-
             lock (_gate)
-            {
                 _serial = serial;
-                _sonar = sonar;
-            }
+        }
 
-            LogDevices(sonar);
-            PublishVolumeTargets(sonar);
+        // Sonar must stay alive even when no ESP is present or the serial port
+        // is being restarted. Only this worker owns the Sonar session lifetime.
+        private async Task RunSonarAsync(CancellationToken token)
+        {
+            while (!token.IsCancellationRequested)
+            {
+                try
+                {
+                    var sonar = new SonarClient();
+                    lock (_gate)
+                        _sonar = sonar;
+
+                    sonar.Events.PollingInterval = TimeSpan.FromMilliseconds(200);
+                    sonar.Events.ChatMixChanged += OnChatMixChanged;
+                    sonar.Events.VolumeChanged += OnVolumeChanged;
+                    sonar.Events.ClassicDeviceChanged += OnClassicDeviceChanged;
+                    sonar.Events.Connected += OnSonarConnected;
+                    sonar.Events.Disconnected += OnSonarDisconnected;
+                    sonar.Events.Start();
+
+                    LogDevices(sonar);
+                    PublishVolumeTargets(sonar);
+                    await Task.Delay(Timeout.Infinite, token);
+                }
+                catch (OperationCanceledException) when (token.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    Log.Error("Sonar connection failed, will retry independently of the ESP.", ex);
+                }
+                finally
+                {
+                    DisconnectSonar();
+                }
+
+                try
+                {
+                    await Task.Delay(RetryInterval, token);
+                }
+                catch (OperationCanceledException) when (token.IsCancellationRequested)
+                {
+                    break;
+                }
+            }
         }
 
         private static void LogDevices(SonarClient sonar)
@@ -425,14 +443,10 @@ namespace SonarController
         private void Disconnect()
         {
             SerialPort? serial;
-            SonarClient? sonar;
-
             lock (_gate)
             {
                 serial = _serial;
-                sonar = _sonar;
                 _serial = null;
-                _sonar = null;
             }
 
             if (serial is not null)
@@ -453,9 +467,17 @@ namespace SonarController
                     serial.Dispose();
                 }
             }
+        }
 
-            // Hands the volume keys back to Windows while Sonar is not running, whether or
-            // not there was a session to tear down.
+        private void DisconnectSonar()
+        {
+            SonarClient? sonar;
+            lock (_gate)
+            {
+                sonar = _sonar;
+                _sonar = null;
+            }
+
             VolumeTargetsChanged?.Invoke([]);
 
             if (sonar is null)
@@ -483,17 +505,25 @@ namespace SonarController
         private void OnChatMixChanged(object? sender, SteelSeriesAPI.Sonar.Models.ChatMixSetting e)
         {
             Log.Info($"ChatMix changed: {e.Balance:F2}");
-            WriteToEsp($"ChatMix:{e.Balance:F2}");
+            if (IsSerialOpen())
+                WriteToEsp($"ChatMix:{e.Balance:F2}");
         }
 
         private void OnVolumeChanged(object? sender, SteelSeriesAPI.Sonar.Events.VolumeChange e)
         {
-            if (e.Channel == Channel.Mic)
+            if (e.Channel == Channel.Mic && IsSerialOpen())
                 WriteToEsp($"MUTED:{Convert.ToInt32(e.IsMuted)}");
         }
 
-        private void OnSonarConnected(object? sender, EventArgs e) =>
+        private void OnSonarConnected(object? sender, EventArgs e)
+        {
             Log.Info("Sonar connected.");
+            SonarClient? sonar;
+            lock (_gate)
+                sonar = _sonar;
+            if (sonar is not null)
+                PublishVolumeTargets(sonar);
+        }
 
         /// <summary>
         /// Fired when the user points a Sonar channel at a different Windows
@@ -518,8 +548,11 @@ namespace SonarController
                 PublishVolumeTargets(sonar);
         }
 
-        private void OnSonarDisconnected(object? sender, EventArgs e) =>
+        private void OnSonarDisconnected(object? sender, EventArgs e)
+        {
             Log.Warn("Sonar disconnected, ChatMix updates paused.");
+            VolumeTargetsChanged?.Invoke([]);
+        }
 
         private bool IsSerialOpen()
         {
